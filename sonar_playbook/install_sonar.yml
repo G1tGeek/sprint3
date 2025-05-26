@@ -1,0 +1,191 @@
+---
+- name: Install and Configure SonarQube with PostgreSQL
+  hosts: sonarqube
+  become: true
+  vars:
+    java_package: openjdk-17-jdk
+    sonarqube_version: 9.9.3.79811
+    sonarqube_user: sonar
+    sonarqube_group: sonar
+    sonarqube_dir: /opt/sonarqube
+    sonarqube_zip_url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-{{ sonarqube_version }}.zip"
+    sonar_scanner_zip_url: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.1.0.4889-linux-x64.zip"
+    sonar_scanner_dir: /opt/sonar-scanner
+    postgres_db: sonarqube
+    postgres_user: sonar
+    postgres_password: sonar
+
+  tasks:
+
+  - name: Update the packages
+    apt:
+      update_cache: true
+
+  - name: Install dependencies
+    apt:
+      name:
+        - "{{ java_package }}"
+        - unzip
+        - postgresql
+        - postgresql-contrib
+        - wget
+      state: present
+
+  - name: Ensure SonarQube group exists
+    group:
+      name: "{{ sonarqube_group }}"
+      state: present
+
+  - name: Ensure SonarQube user exists
+    user:
+      name: "{{ sonarqube_user }}"
+      group: "{{ sonarqube_group }}"
+      home: "{{ sonarqube_dir }}"
+      create_home: no
+      shell: /bin/bash
+      state: present
+
+  - name: Download SonarQube
+    get_url:
+      url: "{{ sonarqube_zip_url }}"
+      dest: "/tmp/sonarqube.zip"
+
+  - name: Extract SonarQube
+    unarchive:
+      src: /tmp/sonarqube.zip
+      dest: /opt/
+      remote_src: yes
+      creates: "/opt/sonarqube-{{ sonarqube_version }}"
+
+  - name: Move SonarQube to target dir
+    command: mv /opt/sonarqube-{{ sonarqube_version }} {{ sonarqube_dir }}
+    args:
+      creates: "{{ sonarqube_dir }}"
+
+  - name: Set permissions for SonarQube
+    file:
+      path: "{{ sonarqube_dir }}"
+      owner: "{{ sonarqube_user }}"
+      group: "{{ sonarqube_group }}"
+      recurse: yes
+
+  - name: Install required PostgreSQL Python library
+    apt:
+      name: python3-psycopg2
+      state: present
+    
+  - name: Create sonar PostgreSQL user
+    become_user: postgres
+    postgresql_user:
+      name: "{{ postgres_user }}"
+      password: "{{ postgres_password }}"
+      encrypted: yes
+
+  - name: Create sonar PostgreSQL database
+    become_user: postgres
+    postgresql_db:
+      name: "{{ postgres_db }}"
+      owner: "{{ postgres_user }}"
+
+  - name: Update sonar.properties for DB settings
+    lineinfile:
+      path: "{{ sonarqube_dir }}/conf/sonar.properties"
+      regexp: '^#?{{ item.key }}='
+      line: "{{ item.key }}={{ item.value }}"
+      state: present
+    loop:
+      - { key: "sonar.jdbc.username", value: "{{ postgres_user }}" }
+      - { key: "sonar.jdbc.password", value: "{{ postgres_password }}" }
+      - { key: "sonar.jdbc.url", value: "jdbc:postgresql://localhost:5432/{{ postgres_db }}" }
+      - { key: "sonar.web.host", value: "0.0.0.0" }
+
+  - name: Add system limits to sysctl.conf
+    blockinfile:
+      path: /etc/sysctl.conf
+      block: |
+        vm.max_map_count=262144
+        fs.file-max=65536
+
+  - name: Add system limits to limits.conf
+    blockinfile:
+      path: /etc/security/limits.conf
+      block: |
+        *  -  nofile  131072
+        *  -  nproc   8192
+  
+  - name: Reboot the server and wait for it to come back
+    ansible.builtin.reboot:
+      reboot_timeout: 600
+      test_command: whoami
+
+  - name: Download SonarScanner
+    get_url:
+      url: "{{ sonar_scanner_zip_url }}"
+      dest: /tmp/sonar-scanner.zip
+
+  - name: Extract SonarScanner to /opt
+    unarchive:
+      src: /tmp/sonar-scanner.zip
+      dest: /opt
+      remote_src: yes
+
+  - name: Rename extracted SonarScanner directory
+    shell: mv /opt/sonar-scanner-* /opt/sonar-scanner
+    args:
+      creates: /opt/sonar-scanner
+
+
+  - name: Set ownership for SonarScanner
+    file:
+      path: "{{ sonar_scanner_dir }}"
+      owner: "{{ ansible_user }}"
+      group: "{{ ansible_user }}"
+      recurse: yes
+
+  - name: Set sonar-scanner in PATH
+    lineinfile:
+      path: ~/.bashrc
+      line: 'export PATH=$PATH:/opt/sonar-scanner/bin'
+      state: present
+
+  - name: Configure SonarScanner
+    lineinfile:
+      path: "{{ sonar_scanner_dir }}/conf/sonar-scanner.properties"
+      regexp: '^#?sonar.host.url='
+      line: "sonar.host.url=http://localhost:9000"
+      state: present
+
+  - name: Create SonarQube systemd service file
+    copy:
+      dest: /etc/systemd/system/sonarqube.service
+      content: |
+        [Unit]
+        Description=SonarQube service
+        After=syslog.target network.target
+
+        [Service]
+        Type=forking
+        User={{ sonarqube_user }}
+        Group={{ sonarqube_group }}
+        ExecStart={{ sonarqube_dir }}/bin/linux-x86-64/sonar.sh start
+        ExecStop={{ sonarqube_dir }}/bin/linux-x86-64/sonar.sh stop
+        StandardOutput=journal
+        LimitNOFILE=131072
+        LimitNPROC=8192
+        TimeoutStartSec=5
+        Restart=always
+        SuccessExitStatus=143
+
+        [Install]
+        WantedBy=multi-user.target
+
+  - name: Reload systemd
+    systemd:
+      daemon_reload: yes
+
+  - name: Enable and start SonarQube
+    systemd:
+      name: sonarqube
+      enabled: yes
+      state: started
+
