@@ -1,0 +1,50 @@
+pipeline {
+    agent any
+
+    environment {
+        SLACK_CHANNEL = '#commit-sign0ff'       
+        SLACK_CREDENTIAL_ID = 'downtime-crew' 
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/G1tGeek/git_testing.git'
+                // Add credentialsId: 'github-creds' if repo is private
+            }
+        }
+
+        stage('Check Signed-off-by') {
+            steps {
+                script {
+                    def commitMessage = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
+                    if (!commitMessage.contains("Signed-off-by:")) {
+                        currentBuild.result = 'FAILURE'
+                        error("❌ Commit is missing Signed-off-by line.")
+                    } else {
+                        echo "✅ Signed-off-by found."
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            slackSend(
+                channel: '#commit-sign0ff',
+                color: 'good',
+                message: "✅ Build #${env.BUILD_NUMBER} succeeded.\nRepository: https://github.com/your-username/your-repo\nCommit contains Signed-off-by.",
+                tokenCredentialId: 'downtime-crew'
+            )
+        }
+        failure {
+            slackSend(
+                channel: '#commit-sign0ff',
+                color: 'danger',
+                message: "❌ Build #${env.BUILD_NUMBER} failed.\nRepository: https://github.com/your-username/your-repo\nMissing Signed-off-by in the latest commit.",
+                tokenCredentialId: 'downtime-crew'
+            )
+        }
+    }
+}
