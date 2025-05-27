@@ -3,13 +3,14 @@ pipeline {
 
     environment {
         SLACK_CHANNEL = '#commit-sign0ff'       
-        SLACK_CREDENTIAL_ID = 'downtime-crew' 
+        SLACK_CREDENTIAL_ID = 'downtime-crew'
+        GIT_URL = 'https://github.com/G1tGeek/git_testing.git'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/G1tGeek/git_testing.git'
+                git branch: 'main', url: env.GIT_URL
                 // Add credentialsId: 'github-creds' if repo is private
             }
         }
@@ -18,11 +19,16 @@ pipeline {
             steps {
                 script {
                     def commitMessage = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
-                    if (!commitMessage.contains("Signed-off-by:")) {
+                    echo "Latest Commit Message:\n${commitMessage}"
+
+                    def signedOffLine = commitMessage.readLines().find { it.startsWith("Signed-off-by:") }
+
+                    if (!signedOffLine) {
                         currentBuild.result = 'FAILURE'
                         error("❌ Commit is missing Signed-off-by line.")
                     } else {
-                        echo "✅ Signed-off-by found."
+                        echo "✅ Found: ${signedOffLine}"
+                        env.SIGNED_OFF_LINE = signedOffLine
                     }
                 }
             }
@@ -32,18 +38,28 @@ pipeline {
     post {
         success {
             slackSend(
-                channel: '#commit-sign0ff',
+                channel: env.SLACK_CHANNEL,
                 color: 'good',
-                message: "✅ Build #${env.BUILD_NUMBER} succeeded.\nRepository: https://github.com/your-username/your-repo\nCommit contains Signed-off-by.",
-                tokenCredentialId: 'downtime-crew'
+                message: """\
+✅ *Build #${env.BUILD_NUMBER} succeeded*
+• Repository: ${env.GIT_URL}
+• ${env.SIGNED_OFF_LINE}
+• Job URL: ${env.BUILD_URL}
+""",
+                tokenCredentialId: env.SLACK_CREDENTIAL_ID
             )
         }
         failure {
             slackSend(
-                channel: '#commit-sign0ff',
+                channel: env.SLACK_CHANNEL,
                 color: 'danger',
-                message: "❌ Build #${env.BUILD_NUMBER} failed.\nRepository: https://github.com/your-username/your-repo\nMissing Signed-off-by in the latest commit.",
-                tokenCredentialId: 'downtime-crew'
+                message: """\
+❌ *Build #${env.BUILD_NUMBER} failed*
+• Repository: ${env.GIT_URL}
+• Reason: Missing Signed-off-by line
+• Job URL: ${env.BUILD_URL}
+""",
+                tokenCredentialId: env.SLACK_CREDENTIAL_ID
             )
         }
     }
