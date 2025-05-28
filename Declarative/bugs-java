@@ -1,5 +1,10 @@
 pipeline {
     agent any
+    
+    tools {
+    maven 'maven3.9.9'      // Must match name in Jenkins
+    jdk 'JDK_17'         // Must match name in Jenkins
+    }
 
     environment {
         SLACK_CHANNEL = 'notificationn-channel'
@@ -18,11 +23,11 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('My SonarQube Server') {
+                withSonarQubeEnv('Yuvraj-sonar') {
                     sh """
-                        mvn clean verify -DskipTests sonar:sonar \
-                          -Dsonar.projectKey=salary-api \
-                          -Dsonar.host.url=http://10.0.2.136:9000 \
+                        mvn clean verify -DskipTests sonar:sonar \\
+                          -Dsonar.projectKey=salary-api \\
+                          -Dsonar.host.url=http://10.0.2.136:9000 \\
                           -Dsonar.login=${SONAR_TOKEN}
                     """
                 }
