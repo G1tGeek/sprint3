@@ -1,0 +1,59 @@
+pipeline {
+    agent any
+
+    environment {
+        SLACK_CHANNEL = 'notificationn-channel'
+        SLACK_CREDENTIAL_ID = 'downtime-crew'
+        GIT_URL = 'https://github.com/G1tGeek/salary-code.git'
+        SONAR_TOKEN = credentials('sonarqube-token-yuvraj') 
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: env.GIT_URL
+                // For private repos, add: credentialsId: 'github-creds'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('My SonarQube Server') {
+                    sh """
+                        mvn clean verify -DskipTests sonar:sonar \
+                          -Dsonar.projectKey=salary-api \
+                          -Dsonar.host.url=http://10.0.2.136:9000 \
+                          -Dsonar.login=${SONAR_TOKEN}
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            slackSend(
+                channel: env.SLACK_CHANNEL,
+                color: 'good',
+                message: """\
+✅ *SonarQube Analysis Succeeded*
+• Repository: ${env.GIT_URL}
+• Job URL: ${env.BUILD_URL}
+""",
+                tokenCredentialId: env.SLACK_CREDENTIAL_ID
+            )
+        }
+        failure {
+            slackSend(
+                channel: env.SLACK_CHANNEL,
+                color: 'danger',
+                message: """\
+❌ *SonarQube Analysis Failed*
+• Repository: ${env.GIT_URL}
+• Job URL: ${env.BUILD_URL}
+""",
+                tokenCredentialId: env.SLACK_CREDENTIAL_ID
+            )
+        }
+    }
+}
