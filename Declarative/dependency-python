@@ -1,0 +1,122 @@
+pipeline {
+    agent any
+
+    environment {
+        ATTENDANCE_REPO = 'https://github.com/OT-MICROSERVICES/attendance-api.git'
+        NOTIFICATION_REPO = 'https://github.com/OT-MICROSERVICES/notification-worker.git'
+        SLACK_CHANNEL = 'notificationn-channel'
+        SLACK_CREDENTIAL_ID = 'downtime-crew'
+    }
+
+    stages {
+
+        stage('Install Packages') {
+            steps {
+                echo 'Installing required packages...'
+                sh '''
+                    apt-get install -y python3 python3-pip python3-venv
+                '''
+            }
+        }
+
+        stage('Clone Repositories') {
+            steps {
+                echo 'Cloning Attendance API and Notification Worker repos...'
+                sh '''
+                    sudo rm -rf notification-worker attendance-api
+                    git clone ${ATTENDANCE_REPO}
+                    git clone ${NOTIFICATION_REPO}
+                '''
+            }
+        }
+
+        stage('Audit Attendance API Dependencies') {
+            steps {
+                dir('attendance-api') {
+                    echo 'Creating virtual environment and auditing Attendance API...'
+                    sh '''
+                        python3 -m venv venv1
+                        . venv1/bin/activate
+                        pip install pip-audit
+                        pip freeze > requirements.txt
+                        pip-audit -r requirements.txt > pip_audit_attendance.txt || true
+                        deactivate
+                    '''
+                    script {
+                        def result = sh(script: 'grep -q "Vulnerability:" pip_audit_attendance.txt', returnStatus: true)
+                        if (result == 0) {
+                            currentBuild.result = 'UNSTABLE'
+                            echo 'Vulnerabilities found in Attendance API.'
+                        }
+                        archiveArtifacts artifacts: 'pip_audit_attendance.txt', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+
+        stage('Audit Notification Worker Dependencies') {
+            steps {
+                dir('notification-worker') {
+                    echo 'Creating virtual environment and auditing Notification Worker...'
+                    sh '''
+                        python3 -m venv venv2
+                        . venv2/bin/activate
+                        pip install pip-audit
+                        pip freeze > requirements.txt
+                        pip-audit -r requirements.txt > pip_audit_notification.txt || true
+                        deactivate
+                    '''
+                    script {
+                        def result = sh(script: 'grep -q "Vulnerability:" pip_audit_notification.txt', returnStatus: true)
+                        if (result == 0) {
+                            currentBuild.result = 'UNSTABLE'
+                            echo 'Vulnerabilities found in Notification Worker.'
+                        }
+                        archiveArtifacts artifacts: 'pip_audit_notification.txt', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+    unstable {
+        echo 'Some vulnerabilities were found. Please review the audit reports.'
+        slackSend(
+            channel: env.SLACK_CHANNEL,
+            color: '#FFA500',
+            message: """\
+⚠️ Vulnerabilities found during dependency audit in *${env.JOB_NAME}* (Build #${env.BUILD_NUMBER}).
+Review the reports here: ${env.BUILD_URL}
+""",
+            tokenCredentialId: env.SLACK_CREDENTIAL_ID
+        )
+    }
+    success {
+        echo 'All dependency checks passed without vulnerabilities.'
+        slackSend(
+            channel: env.SLACK_CHANNEL,
+            color: 'good',
+            message: """\
+✅ *Build #${env.BUILD_NUMBER} succeeded*
+• Job: ${env.JOB_NAME}
+• URL: ${env.BUILD_URL}
+""",
+            tokenCredentialId: env.SLACK_CREDENTIAL_ID
+        )
+    }
+    failure {
+        echo 'Build failed.'
+        slackSend(
+            channel: env.SLACK_CHANNEL,
+            color: 'danger',
+            message: """\
+❌ *Build #${env.BUILD_NUMBER} failed*
+• Job: ${env.JOB_NAME}
+• URL: ${env.BUILD_URL}
+""",
+            tokenCredentialId: env.SLACK_CREDENTIAL_ID
+        )
+    }
+  }
+}
