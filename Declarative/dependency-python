@@ -6,15 +6,40 @@ pipeline {
         NOTIFICATION_REPO = 'https://github.com/OT-MICROSERVICES/notification-worker.git'
         SLACK_CHANNEL = 'notificationn-channel'
         SLACK_CREDENTIAL_ID = 'downtime-crew'
+        EMAIL_CREDENTIAL_ID = 'yuvraj-gmail'
+        EMAIL_TO = 'yuvraj.singh.snaatak@mygurukulam.co'
     }
 
     stages {
 
         stage('Install Packages') {
             steps {
-                echo 'Installing required packages...'
+                echo 'Checking and installing required packages if missing...'
                 sh '''
-                    apt-get install -y python3 python3-pip python3-venv
+                    set -e
+
+                    check_package() {
+                        dpkg -s "$1" >/dev/null 2>&1
+                    }
+
+                    MISSING=0
+
+                    for pkg in python3 python3-pip python3-venv; do
+                        if check_package "$pkg"; then
+                            echo "$pkg is already installed."
+                        else
+                            echo "$pkg is NOT installed."
+                            MISSING=1
+                        fi
+                    done
+
+                    if [ "$MISSING" -eq 1 ]; then
+                        echo "Installing missing packages..."
+                        sudo apt-get update
+                        sudo apt-get install -y python3 python3-pip python3-venv
+                    else
+                        echo "All required packages are already installed."
+                    fi
                 '''
             }
         }
@@ -80,43 +105,79 @@ pipeline {
     }
 
     post {
-    unstable {
-        echo 'Some vulnerabilities were found. Please review the audit reports.'
-        slackSend(
-            channel: env.SLACK_CHANNEL,
-            color: '#FFA500',
-            message: """\
+        unstable {
+            echo 'Some vulnerabilities were found. Please review the audit reports.'
+            slackSend(
+                channel: env.SLACK_CHANNEL,
+                color: '#FFA500',
+                message: """\
 ⚠️ Vulnerabilities found during dependency audit in *${env.JOB_NAME}* (Build #${env.BUILD_NUMBER}).
 Review the reports here: ${env.BUILD_URL}
 """,
-            tokenCredentialId: env.SLACK_CREDENTIAL_ID
-        )
-    }
-    success {
-        echo 'All dependency checks passed without vulnerabilities.'
-        slackSend(
-            channel: env.SLACK_CHANNEL,
-            color: 'good',
-            message: """\
+                tokenCredentialId: env.SLACK_CREDENTIAL_ID
+            )
+        }
+
+        success {
+            echo 'All dependency checks passed without vulnerabilities.'
+            slackSend(
+                channel: env.SLACK_CHANNEL,
+                color: 'good',
+                message: """\
 ✅ *Build #${env.BUILD_NUMBER} succeeded*
 • Job: ${env.JOB_NAME}
 • URL: ${env.BUILD_URL}
 """,
-            tokenCredentialId: env.SLACK_CREDENTIAL_ID
-        )
-    }
-    failure {
-        echo 'Build failed.'
-        slackSend(
-            channel: env.SLACK_CHANNEL,
-            color: 'danger',
-            message: """\
+                tokenCredentialId: env.SLACK_CREDENTIAL_ID
+            )
+        }
+
+        failure {
+            echo 'Build failed.'
+            slackSend(
+                channel: env.SLACK_CHANNEL,
+                color: 'danger',
+                message: """\
 ❌ *Build #${env.BUILD_NUMBER} failed*
 • Job: ${env.JOB_NAME}
 • URL: ${env.BUILD_URL}
 """,
-            tokenCredentialId: env.SLACK_CREDENTIAL_ID
-        )
+                tokenCredentialId: env.SLACK_CREDENTIAL_ID
+            )
+        }
+
+        always {
+            echo 'Sending email with audit reports...'
+            script {
+                def emailBody = """\
+Hello Yuvraj,
+
+Please find attached the pip-audit reports from your Jenkins build.
+
+• Job: ${env.JOB_NAME}
+• Build Number: ${env.BUILD_NUMBER}
+• URL: ${env.BUILD_URL}
+
+Regards,
+Jenkins
+"""
+
+                emailext(
+                    to: "${env.EMAIL_TO}",
+                    subject: "Jenkins Build #${env.BUILD_NUMBER} - Audit Reports",
+                    body: emailBody,
+                    attachmentsPattern: '**/pip_audit_*.txt',
+                    mimeType: 'text/plain',
+                    replyTo: "${env.EMAIL_TO}",
+                    from: "jenkins@mygurukulam.co",
+                    smtpHost: "smtp.gmail.com",
+                    smtpPort: "587",
+                    useSsl: false,
+                    useTls: true,
+                    authUsername: credentials("${env.EMAIL_CREDENTIAL_ID}").username,
+                    authPassword: credentials("${env.EMAIL_CREDENTIAL_ID}").password
+                )
+            }
+        }
     }
-  }
 }
