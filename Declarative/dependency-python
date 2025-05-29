@@ -6,7 +6,6 @@ pipeline {
         NOTIFICATION_REPO = 'https://github.com/OT-MICROSERVICES/notification-worker.git'
         SLACK_CHANNEL = 'notificationn-channel'
         SLACK_CREDENTIAL_ID = 'downtime-crew'
-        EMAIL_CREDENTIAL_ID = 'yuvraj-gmail'
         EMAIL_TO = 'yuvraj.singh.snaatak@mygurukulam.co'
     }
 
@@ -167,15 +166,7 @@ Jenkins
                     subject: "Jenkins Build #${env.BUILD_NUMBER} - Audit Reports",
                     body: emailBody,
                     attachmentsPattern: '**/pip_audit_*.txt',
-                    mimeType: 'text/plain',
-                    replyTo: "${env.EMAIL_TO}",
-                    from: "jenkins@mygurukulam.co",
-                    smtpHost: "smtp.gmail.com",
-                    smtpPort: "587",
-                    useSsl: false,
-                    useTls: true,
-                    authUsername: credentials("${env.EMAIL_CREDENTIAL_ID}").username,
-                    authPassword: credentials("${env.EMAIL_CREDENTIAL_ID}").password
+                    mimeType: 'text/plain'
                 )
             }
         }
